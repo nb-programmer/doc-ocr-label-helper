@@ -20,4 +20,4 @@ COPY --chown=appuser . .
 
 RUN pip install --no-compile --no-cache-dir --upgrade . uvicorn
 
-ENTRYPOINT ["python3", "-m", "uvicorn", "--factory", "sample_fastapi:init_app"]
+ENTRYPOINT ["python3", "-m", "uvicorn", "--factory", "doc_label:init_app"]

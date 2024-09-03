@@ -6,9 +6,9 @@ __anchors__:
 
 __files__:
   - &root_log_file "dev/root.log"
-  - &app_log_file "dev/sample-fastapi.log"
-  - &uvicorn_error_log_file "dev/sample-fastapi.error.log"
-  - &uvicorn_access_log_file "dev/sample-fastapi.access.log"
+  - &app_log_file "dev/doc-label.log"
+  - &uvicorn_error_log_file "dev/doc-label.error.log"
+  - &uvicorn_access_log_file "dev/doc-label.access.log"
 
 # Logging formatters
 formatters:
@@ -62,7 +62,7 @@ handlers:
     encoding: utf-8
     delay: true
 
-  sample_fastapi_rotating_file:
+  doc_label_rotating_file:
     class: logging.handlers.TimedRotatingFileHandler
     level: INFO
     formatter: generic_file_fmt
@@ -125,10 +125,10 @@ root:
 # Configure loggers by name
 loggers:
   # Our application package logger tree
-  sample_fastapi:
+  doc_label:
     level: INFO
     handlers:
-      - sample_fastapi_rotating_file
+      - doc_label_rotating_file
 
   # Auto-reload messages get annoying, so set it to WARN level
   watchfiles.main:

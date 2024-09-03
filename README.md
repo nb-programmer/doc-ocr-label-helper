@@ -1,10 +1,6 @@
-# Sample FastAPI application
+# Document Labelling helper FastAPI application
 
-Sample FastAPI application.
-
-## Template
-
-Note that this is a template project. You will need to make changes to this application if you want to make use of it. Please read the [Template readme](TEMPLATE.md) file for more information on what this project does and how to use the template.
+Document Labelling helper FastAPI application.
 
 ## Development setup
 
@@ -55,5 +51,5 @@ bash ./scripts/dev-launch.sh
 
 6. You can also run the cli script:
 ```shell
-sample-fastapi --help
+doc-label --help
 ```

@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "sample-fastapi"
+name = "doc-label"
 version = "0.1.0"
 description = ""
 authors = ["Narayan Bandodker <narayanband1356@gmail.com>"]
@@ -8,7 +8,7 @@ readme = "README.md"
 
 [tool.poetry.scripts]
 # CLI script
-sample-fastapi = "sample_fastapi.cli:main"
+doc-label = "doc_label.cli:main"
 
 
 [tool.poetry.dependencies]

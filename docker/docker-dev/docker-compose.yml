@@ -1,8 +1,8 @@
 # Development service docker compose script
 
 services:
-  sample_fastapi:
-    image: sample-fastapi:latest
+  doc_label:
+    image: doc-label:latest
     build:
       context: .
 

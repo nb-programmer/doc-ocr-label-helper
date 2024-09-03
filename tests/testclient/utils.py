@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 @lru_cache()
 def get_app():
-    from sample_fastapi.app.app_factory import init_app
+    from doc_label.app.app_factory import init_app
 
     return init_app()
 
