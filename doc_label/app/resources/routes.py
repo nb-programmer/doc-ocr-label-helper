@@ -2,4 +2,6 @@ from fastapi import FastAPI
 
 
 def init_routes(app: FastAPI):
-    pass
+    from . import dataset
+
+    dataset.init_app(app)
