@@ -4,12 +4,9 @@ from fastapi import FastAPI
 
 
 @asynccontextmanager
-async def _dummy_lifespan():
-    yield
-
-
-@asynccontextmanager
 async def lifespan(app: FastAPI):
+    from . import dataset
+
     async with AsyncExitStack() as stack:
-        await stack.enter_async_context(_dummy_lifespan())
+        await stack.enter_async_context(dataset.lifespan(app))
         yield

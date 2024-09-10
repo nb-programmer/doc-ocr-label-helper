@@ -12,9 +12,4 @@ def dataset_store_path(app_dirs: AppDirectories):
 def get_dataset_store_path(
     app_dirs: AppDirectories = Depends(get_app_dirs),
 ) -> Path:
-    data_dir = dataset_store_path(app_dirs)
-
-    # Create dataset store directory
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    return data_dir
+    return dataset_store_path(app_dirs)
