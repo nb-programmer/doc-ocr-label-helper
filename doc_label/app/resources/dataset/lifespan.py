@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from ...config import AppDirectories
-from .depends import dataset_store_path
+from .depends import dataset_cache_path, dataset_store_path
 
 
 @asynccontextmanager
@@ -14,5 +14,8 @@ async def lifespan(app: FastAPI):
 
     # Dataset store directory
     dataset_store_path(app_dir_settings).mkdir(parents=True, exist_ok=True)
+
+    # Dataset cache directory
+    dataset_cache_path(app_dir_settings).mkdir(parents=True, exist_ok=True)
 
     yield

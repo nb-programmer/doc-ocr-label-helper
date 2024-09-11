@@ -1,6 +1,7 @@
+import logging
 import os
-from pathlib import Path
-from urllib.parse import quote as urlquote
+from pathlib import Path, PurePosixPath
+from typing import Awaitable, Callable
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -9,13 +10,13 @@ import pytesseract
 import unidecode
 from lxml import etree
 from numpy import average
-from PIL import Image as PILImage
 from shapely.geometry import Polygon
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
-LABELS = []
+LOG = logging.getLogger(__name__)
 
-label2id = {k: i for i, k in enumerate(LABELS)}
+GetImagePathCallback = Callable[[str], Awaitable[str]]
+Label2ID = Callable[[str], int | None]
 
 
 class LineDict(dict):
@@ -23,9 +24,7 @@ class LineDict(dict):
     def score(self):
         if len(self["word_data"]) == 0:
             return 0.0
-        return float(
-            average(list(map(lambda x: x["conf"], self["word_data"].values())))
-        )
+        return float(average(list(map(lambda x: x["conf"], self["word_data"].values()))))
 
     @property
     def box(self):
@@ -39,9 +38,7 @@ class LineDict(dict):
 
     @property
     def text(self):
-        return " ".join(
-            filter(None, map(lambda x: x["text"], self["word_data"].values()))
-        ).strip()
+        return " ".join(filter(None, map(lambda x: x["text"], self["word_data"].values()))).strip()
 
 
 def convert_to_layout_studio_tasks(ocr_tree: dict[tuple, LineDict], image_size: tuple[int, int], serve_url: str):
@@ -155,16 +152,29 @@ def hocr_to_dataframe(fp):
     return dfReturn
 
 
-def custom_data(label_studio_data: list[dict]):
-    document_data = dict()
-    document_data["file_src"] = []
-    document_data["file_name"] = []
-    document_data["labelled_bbox"] = []
+def url_to_filename(src: str) -> str:
+    return PurePosixPath(urlparse(src).path).name
+
+
+async def default_ocr_image_path(src: str) -> str:
+    return str(Path(url_to_filename(src)).absolute())
+
+
+async def parse_custom_dataset_to_df(
+    label_studio_data: list[dict], get_image_path_callback: GetImagePathCallback = default_ocr_image_path
+):
+    document_data = []
 
     # Iterate through tasks
     for row in label_studio_data:
+        # Contains URL to the image
         file_src = row["ocr"]
-        file_name = os.path.basename(urlparse(file_src).path)
+
+        # Just the filename
+        file_name = url_to_filename(file_src)
+
+        # Get path to image (or download if needed)
+        image_path = await get_image_path_callback(file_src)
 
         label_list = []
 
@@ -187,42 +197,64 @@ def custom_data(label_studio_data: list[dict]):
 
             label_list.append((labels, (x1, y1, x2, y2), original_h, original_w))
 
-        document_data["file_src"].append(file_src)
-        document_data["file_name"].append(file_name)
-        document_data["labelled_bbox"].append(label_list)
+        # Add collected data to df
+        document_data.append(
+            {
+                "file_src": file_src,
+                "file_name": file_name,
+                "image_path": image_path,
+                "labelled_bbox": label_list,
+            }
+        )
 
     return pd.DataFrame(document_data)
 
 
-def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame):
+def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame, label2id: Label2ID, hocr_save_path: Path):
     final_list = []
 
-    for i, row in tqdm(custom_dataset.iterrows(), total=custom_dataset.shape[0]):
+    LOG.info("Running hOCR for the following dataset (first 5 rows):\n%s", custom_dataset.head(5))
+
+    for i, row in tqdm(
+        custom_dataset.iterrows(), total=custom_dataset.shape[0], unit="item", desc="Task hOCR", colour="blue"
+    ):
         custom_label_text = {}
         word_list = []
         ner_tags_list = []
         bboxes_list = []
 
-        custom_label_text["id"] = i
-        custom_label_text["file_name"] = str(row["image_path"])
+        image_file_path: str | None = row["image_path"]
+        if image_file_path is None or image_file_path == "":
+            LOG.warning("Image for task `%s` was null (not found in dataset?). Skipping.", i)
+            continue
 
-        image = Path(row["image_path"])
+        image_path = str(image_file_path)
+        image_filename = os.path.basename(image_path)
+
+        custom_label_text["id"] = i
+        custom_label_text["file_name"] = image_path
+
         label_coord_list = row["labelled_bbox"]
 
-        hocr_save_path = image.parent.joinpath("layoutlmv3_hocr_output/")
-        hocr_save_path.mkdir(exist_ok=True)
+        if len(label_coord_list) == 0:
+            LOG.info("Skipping task `%s` as there are no labels.", i)
+            continue
 
-        for label_coord in label_coord_list:
+        for label_coord in tqdm(label_coord_list, unit="box", desc="Box hOCR", colour="green", leave=False):
             (x1, y1, x2, y2) = label_coord[1]
             box1 = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
             label = label_coord[0][0]
-            hocr_file = hocr_save_path.joinpath(image.name).with_suffix(".hocr")
-            hocr_base_name = hocr_file.with_suffix("")
+
+            # Location to store the hOCR results
+            hocr_file = hocr_save_path.joinpath(image_filename).with_suffix(".hocr")
+
+            # PyTesseract needs the filename without extension, so remove it.
+            hocr_base_name = str(hocr_file.with_suffix(""))
 
             # Perform HOCR
             pytesseract.pytesseract.run_tesseract(
-                str(image),
-                str(hocr_base_name),
+                image_path,
+                hocr_base_name,
                 extension="box",
                 lang=None,
                 config="hocr",
@@ -243,9 +275,11 @@ def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame):
 
                 if overlap_perc > 0.80:
                     if word != "-":
+                        # Get label id
+                        label_id = label2id(label)
+
                         word_list.append(word)
                         bboxes_list.append(coords)
-                        label_id = label2id[label]
                         ner_tags_list.append(label_id)
 
                     custom_label_text["tokens"] = word_list
