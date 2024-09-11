@@ -38,7 +38,7 @@ class LineDict(dict):
 
     @property
     def text(self):
-        return " ".join(filter(None, map(lambda x: x["text"], self["word_data"].values()))).strip()
+        return " ".join(filter(None, map(lambda x: str(x["text"]), self["word_data"].values()))).strip()
 
 
 def convert_to_layout_studio_tasks(ocr_tree: dict[tuple, LineDict], image_size: tuple[int, int], serve_url: str):

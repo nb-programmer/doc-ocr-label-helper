@@ -34,7 +34,7 @@ class DatasetProcessService:
 
     def construct_serve_url(self, file: Path):
         static_file_path = urllib.parse.quote(file.name)
-        return self._req.url_for("dataset_files", path=static_file_path)
+        return str(self._req.url_for("dataset_files", path=static_file_path))
 
     def image_ocr(self, file: Path) -> tuple[Path, tuple[int, int], pd.DataFrame]:
         with Image.open(file.absolute()) as image:
