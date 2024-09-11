@@ -20,4 +20,4 @@ def init_app(app: FastAPI):
 
     dataset_dir = dataset_store_path(AppDirectories())
 
-    app.mount("/files/dataset", StaticFiles(directory=dataset_dir), name="dataset_files")
+    app.mount("/files/dataset", StaticFiles(directory=dataset_dir, check_dir=False), name="dataset_files")
