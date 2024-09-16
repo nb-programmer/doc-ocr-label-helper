@@ -1,5 +1,7 @@
 import logging
 import os
+import random
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Awaitable, Callable
 from urllib.parse import urlparse
@@ -14,6 +16,8 @@ from shapely.geometry import Polygon
 from tqdm.auto import tqdm
 
 LOG = logging.getLogger(__name__)
+
+SKIP_EMPTY = False
 
 GetImagePathCallback = Callable[[str], Awaitable[str]]
 Label2ID = Callable[[str], int | None]
@@ -232,22 +236,23 @@ def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame, label2id: Label2ID, 
         image_filename = os.path.basename(image_path)
 
         custom_label_text["id"] = i
-        custom_label_text["file_name"] = image_path
+        custom_label_text["image"] = image_path
+        custom_label_text["tokens"] = []
+        custom_label_text["bboxes"] = []
+        custom_label_text["ner_tags"] = []
 
         label_coord_list = row["labelled_bbox"]
 
-        if len(label_coord_list) == 0:
+        if SKIP_EMPTY and len(label_coord_list) == 0:
             LOG.info("Skipping task `%s` as there are no labels.", i)
             continue
 
-        for label_coord in tqdm(label_coord_list, unit="box", desc="Box hOCR", colour="green", leave=False):
-            (x1, y1, x2, y2) = label_coord[1]
-            box1 = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
-            label = label_coord[0][0]
+        ### OCR the image with HOCR output ###
 
-            # Location to store the hOCR results
-            hocr_file = hocr_save_path.joinpath(image_filename).with_suffix(".hocr")
+        # Location to store the hOCR results
+        hocr_file = hocr_save_path.joinpath(image_filename).with_suffix(".hocr")
 
+        if not hocr_file.exists():
             # PyTesseract needs the filename without extension, so remove it.
             hocr_base_name = str(hocr_file.with_suffix(""))
 
@@ -260,7 +265,14 @@ def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame, label2id: Label2ID, 
                 config="hocr",
             )
 
-            hocr_df = hocr_to_dataframe(hocr_file)
+        # Convert the saved HOCR file to DF
+        hocr_df = hocr_to_dataframe(hocr_file)
+
+        # Apply to each box labelled in the task
+        for label_coord in tqdm(label_coord_list, unit="box", desc="Box hOCR", colour="green", leave=False):
+            (x1, y1, x2, y2) = label_coord[1]
+            box1 = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+            label = label_coord[0][0]
 
             for _, word_obj in hocr_df.iterrows():
                 coords = word_obj["coords"]
@@ -282,10 +294,17 @@ def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame, label2id: Label2ID, 
                         bboxes_list.append(coords)
                         ner_tags_list.append(label_id)
 
-                    custom_label_text["tokens"] = word_list
-                    custom_label_text["bboxes"] = bboxes_list
-                    custom_label_text["ner_tags"] = ner_tags_list
+        # Add data to the row
+        custom_label_text["tokens"] = word_list
+        custom_label_text["bboxes"] = bboxes_list
+        custom_label_text["ner_tags"] = ner_tags_list
 
         final_list.append(custom_label_text)
 
     return final_list
+
+
+@contextmanager
+def random_context():
+    yield (old_state := random.getstate())
+    random.setstate(old_state)
