@@ -1,7 +1,8 @@
+import asyncio
 import logging
 import os
 import random
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from typing import Awaitable, Callable
 from urllib.parse import urlparse
@@ -16,6 +17,9 @@ from shapely.geometry import Polygon
 from tqdm.auto import tqdm
 
 LOG = logging.getLogger(__name__)
+
+RANDOM_LOCK = asyncio.Lock()
+
 
 SKIP_EMPTY = False
 
@@ -304,7 +308,8 @@ def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame, label2id: Label2ID, 
     return final_list
 
 
-@contextmanager
-def random_context():
-    yield (old_state := random.getstate())
-    random.setstate(old_state)
+@asynccontextmanager
+async def async_random_context():
+    async with RANDOM_LOCK:
+        yield (old_state := random.getstate())
+        random.setstate(old_state)

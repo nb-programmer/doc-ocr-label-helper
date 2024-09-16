@@ -11,7 +11,11 @@ from fastapi import Depends, File, Form, HTTPException, UploadFile, status
 
 from .depends import get_dataset_cache_path, get_dataset_store_path
 from .services import DatasetProcessService
-from .utils import dataframe_to_dataset_hocr, parse_custom_dataset_to_df, random_context
+from .utils import (
+    async_random_context,
+    dataframe_to_dataset_hocr,
+    parse_custom_dataset_to_df,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -111,7 +115,7 @@ async def convert_results_to_hf(
     data_with_boxes = list(filter(lambda r: len(r["bboxes"]) > 0, final_dataset_list))
     data_no_boxes = list(filter(lambda r: len(r["bboxes"]) == 0, final_dataset_list))
 
-    with random_context():
+    async with async_random_context():
         random.seed(random_seed)
 
         # Unbalanced dataset oversampling
