@@ -125,10 +125,16 @@ async def convert_results_to_hf(
     if dataset_name == "":
         dataset_name = "dataset"
 
-    label_id_map = {v: i for i, v in enumerate(labels_list)}
+    labels_list_bio = ["O"]
+    for lbl in labels_list:
+        labels_list_bio.append("B-%s" % lbl)
+        labels_list_bio.append("I-%s" % lbl)
+
+    label_id_map = {v: i for i, v in enumerate(labels_list_bio)}
 
     def label2id(s):
-        return label_id_map.get(s, -1)
+        iob_tag = "I-%s" % s
+        return label_id_map.get(iob_tag, 0)
 
     labelled_df = await parse_custom_dataset_to_df(
         label_studio_data,
@@ -217,7 +223,7 @@ async def convert_results_to_hf(
                     {"name": "bboxes", "sequence": {"sequence": {"dtype": "int64"}}},
                     {
                         "name": "ner_tags",
-                        "sequence": {"dtype": {"class_label": {"names": labels_list}}},
+                        "sequence": {"dtype": {"class_label": {"names": labels_list_bio}}},
                     },
                     {"name": "image", "dtype": "image"},
                 ]
