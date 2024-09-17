@@ -1,21 +1,42 @@
 import json
 import logging
 import random
+import shutil
+import tempfile
 import urllib.parse
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Annotated
 
+import datasets
 import numpy as np
+import yaml
 from fastapi import Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 
-from .depends import get_dataset_cache_path, get_dataset_store_path
+from .depends import (
+    get_dataset_cache_path,
+    get_dataset_export_path,
+    get_dataset_store_path,
+)
 from .services import DatasetProcessService
 from .utils import (
     async_random_context,
     dataframe_to_dataset_hocr,
     parse_custom_dataset_to_df,
 )
+
+DATASET_README_FORMAT = """---
+{config_yaml}
+---
+"""
+
+TRAIN_SET_FILENAME = "train.jsonl"
+TEST_SET_FILENAME = "test.jsonl"
+README_FILENAME = "README.md"
+MAX_SHARD_SIZE = "64MB"
+DS_ARCHIVE_FORMAT = "zip"
+
 
 LOG = logging.getLogger(__name__)
 
@@ -74,8 +95,10 @@ async def convert_results_to_hf(
     labels_file: JSONUpload,
     train_split_percent: float = Form(default=0.8, ge=0.0, le=1.0),
     random_seed: str | None = Form(default=""),
+    dataset_name: str = Form(default="dataset"),
     dataset_path: Path = Depends(get_dataset_store_path),
     cache_path: Path = Depends(get_dataset_cache_path),
+    export_path: Path = Depends(get_dataset_export_path),
 ):
     label_studio_data: list[dict] = json.load(json_file.file)
     labels_list: list[str] = json.load(labels_file.file)
@@ -95,6 +118,10 @@ async def convert_results_to_hf(
     # Empty RNG seed should be parsed as `None` to indicate random seed.
     if isinstance(random_seed, str) and random_seed == "":
         random_seed = None
+
+    # In case we receive an empty dataset name, revert to default
+    if dataset_name == "":
+        dataset_name = "dataset"
 
     label_id_map = {v: i for i, v in enumerate(labels_list)}
 
@@ -137,4 +164,80 @@ async def convert_results_to_hf(
     assert len(train_set) == train_count
     assert len(test_set) == test_count
 
-    breakpoint()
+    LOG.info(
+        "Split dataset of %d elements into train/test: %d/%d.", len(final_dataset_list), len(train_set), len(test_set)
+    )
+
+    # Export to HuggingFace Datasets format
+
+    # TODO: aiofiles
+    with tempfile.TemporaryDirectory(prefix="dataset-", dir=cache_path) as tmpdir:
+        tmpdir = Path(tmpdir)
+
+        dataset_path = tmpdir / dataset_name
+        dataset_path.mkdir(exist_ok=True)
+
+        dataset_load_cache_dir = tmpdir / ("hf-cache-%s" % tmpdir.name)
+
+        ds_save_path = tmpdir / ("%s.hf/" % dataset_name)
+        ds_archive_export_file = export_path / ("%s_%s" % (tmpdir.name, dataset_name))
+
+        dataset_config = {
+            "configs": [
+                {
+                    "config_name": "default",
+                    "data_files": [
+                        {
+                            "split": "train",
+                            "path": TRAIN_SET_FILENAME,
+                        },
+                        {
+                            "split": "test",
+                            "path": TEST_SET_FILENAME,
+                        },
+                    ],
+                }
+            ],
+            "dataset_info": {
+                "features": [
+                    {"name": "id", "dtype": "string"},
+                    {"name": "tokens", "sequence": {"dtype": "string"}},
+                    {"name": "bboxes", "sequence": {"sequence": {"dtype": "int64"}}},
+                    {
+                        "name": "ner_tags",
+                        "sequence": {"dtype": {"class_label": {"names": labels_list}}},
+                    },
+                    {"name": "image", "dtype": "image"},
+                ]
+            },
+        }
+
+        # Write training set as JSONL format
+        with open(dataset_path / TRAIN_SET_FILENAME, "w") as f:
+            for detail in train_set:
+                f.write(json.dumps(detail))
+                f.write("\n")
+
+        # Write testing set as JSONL format
+        with open(dataset_path / TEST_SET_FILENAME, "w") as f:
+            for detail in test_set:
+                f.write(json.dumps(detail))
+                f.write("\n")
+
+        # Write README file containing dataset config and description
+        with open(dataset_path / README_FILENAME, "w") as f:
+            f.write(
+                DATASET_README_FORMAT.format(
+                    config_yaml=yaml.safe_dump(dataset_config),
+                )
+            )
+
+        # Create dataset from folder and save it to disk
+        datasets.load_dataset(str(dataset_path), cache_dir=dataset_load_cache_dir).save_to_disk(
+            ds_save_path, max_shard_size=MAX_SHARD_SIZE
+        )
+
+        # Compress to zip
+        archive_path = shutil.make_archive(ds_archive_export_file, DS_ARCHIVE_FORMAT, ds_save_path)
+
+        return FileResponse(archive_path)
