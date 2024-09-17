@@ -7,6 +7,7 @@ import urllib.parse
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Annotated
+from uuid import uuid4
 
 import datasets
 import numpy as np
@@ -23,6 +24,7 @@ from .services import DatasetProcessService
 from .utils import (
     async_random_context,
     dataframe_to_dataset_hocr,
+    dataset_normalize_bboxes,
     parse_custom_dataset_to_df,
 )
 
@@ -139,9 +141,14 @@ async def convert_results_to_hf(
 
     final_dataset_list = dataframe_to_dataset_hocr(labelled_df, label2id=label2id, hocr_save_path=cache_path)
 
+    # Re-scale bounding boxes to 0-1000 range
+    dataset_normalize_bboxes(final_dataset_list)
+
+    # Figure out rows with boxes and without
     data_with_boxes = list(filter(lambda r: len(r["bboxes"]) > 0, final_dataset_list))
     data_no_boxes = list(filter(lambda r: len(r["bboxes"]) == 0, final_dataset_list))
 
+    # Oversampling and shuffle
     async with async_random_context():
         random.seed(random_seed)
 
@@ -154,6 +161,8 @@ async def convert_results_to_hf(
 
         # Shuffle dataset
         random.shuffle(final_dataset_list)
+
+    # Test/train split
 
     train_count = int(len(final_dataset_list) * train_split_percent)
     test_count = len(final_dataset_list) - train_count
@@ -174,13 +183,15 @@ async def convert_results_to_hf(
     with tempfile.TemporaryDirectory(prefix="dataset-", dir=cache_path) as tmpdir:
         tmpdir = Path(tmpdir)
 
-        dataset_path = tmpdir / dataset_name
+        rand_id = uuid4()
+
+        dataset_load_name = "%s-%s" % (dataset_name, rand_id)
+
+        dataset_path = tmpdir / dataset_load_name
         dataset_path.mkdir(exist_ok=True)
 
-        dataset_load_cache_dir = tmpdir / ("hf-cache-%s" % tmpdir.name)
-
         ds_save_path = tmpdir / ("%s.hf/" % dataset_name)
-        ds_archive_export_file = export_path / ("%s_%s" % (tmpdir.name, dataset_name))
+        ds_archive_export_file = export_path / tmpdir.name / dataset_name
 
         dataset_config = {
             "configs": [
@@ -201,6 +212,7 @@ async def convert_results_to_hf(
             "dataset_info": {
                 "features": [
                     {"name": "id", "dtype": "string"},
+                    {"name": "filename", "dtype": "string"},
                     {"name": "tokens", "sequence": {"dtype": "string"}},
                     {"name": "bboxes", "sequence": {"sequence": {"dtype": "int64"}}},
                     {
@@ -233,11 +245,9 @@ async def convert_results_to_hf(
             )
 
         # Create dataset from folder and save it to disk
-        datasets.load_dataset(str(dataset_path), cache_dir=dataset_load_cache_dir).save_to_disk(
-            ds_save_path, max_shard_size=MAX_SHARD_SIZE
-        )
+        datasets.load_dataset(str(dataset_path)).save_to_disk(ds_save_path, max_shard_size=MAX_SHARD_SIZE)
 
         # Compress to zip
-        archive_path = shutil.make_archive(ds_archive_export_file, DS_ARCHIVE_FORMAT, ds_save_path)
+        archive_path = Path(shutil.make_archive(ds_archive_export_file, DS_ARCHIVE_FORMAT, ds_save_path))
 
-        return FileResponse(archive_path)
+        return FileResponse(archive_path, filename=archive_path.name)

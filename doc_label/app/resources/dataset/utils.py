@@ -3,8 +3,9 @@ import logging
 import os
 import random
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ import pytesseract
 import unidecode
 from lxml import etree
 from numpy import average
+from PIL import Image as PILImage
 from shapely.geometry import Polygon
 from tqdm.auto import tqdm
 
@@ -25,6 +27,15 @@ SKIP_EMPTY = False
 
 GetImagePathCallback = Callable[[str], Awaitable[str]]
 Label2ID = Callable[[str], int | None]
+
+
+class LabelledOCRItem(TypedDict):
+    id: str
+    filename: str
+    image: os.PathLike
+    tokens: list
+    bboxes: list
+    ner_tags: list
 
 
 class LineDict(dict):
@@ -219,7 +230,7 @@ async def parse_custom_dataset_to_df(
 
 
 def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame, label2id: Label2ID, hocr_save_path: Path):
-    final_list = []
+    final_list: list[LabelledOCRItem] = []
 
     LOG.info("Running hOCR for the following dataset (first 5 rows):\n%s", custom_dataset.head(5))
 
@@ -240,6 +251,7 @@ def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame, label2id: Label2ID, 
         image_filename = os.path.basename(image_path)
 
         custom_label_text["id"] = i
+        custom_label_text["filename"] = image_filename
         custom_label_text["image"] = image_path
         custom_label_text["tokens"] = []
         custom_label_text["bboxes"] = []
@@ -306,6 +318,25 @@ def dataframe_to_dataset_hocr(custom_dataset: pd.DataFrame, label2id: Label2ID, 
         final_list.append(custom_label_text)
 
     return final_list
+
+
+def normalize_bbox(bbox: list[int], size: tuple[int, int]):
+    return [
+        int(1000 * bbox[0] / size[0]),
+        int(1000 * bbox[1] / size[1]),
+        int(1000 * bbox[2] / size[0]),
+        int(1000 * bbox[3] / size[1]),
+    ]
+
+
+def dataset_normalize_bboxes(dataset: list[LabelledOCRItem]):
+    """Normalize the bboxes in the dataset to 0-1000 range in-place by scaling it based on image size."""
+    for item in dataset:
+        with PILImage.open(item["image"]) as image:
+            size = image.size
+
+        bboxes = item["bboxes"]
+        item["bboxes"] = list(map(partial(normalize_bbox, size=size), bboxes))
 
 
 @asynccontextmanager
